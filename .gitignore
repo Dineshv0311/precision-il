@@ -1,0 +1,55 @@
+# Virtual Environment
+precision_il/
+venv/
+.venv/
+env/
+
+# Python Cache & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+
+# PyTorch Model Checkpoints & Policy Weights (Too large for Git)
+models/*
+!models/.gitkeep
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# Demonstration Datasets & Simulation Trajectories
+data/*
+!data/.gitkeep
+*.hdf5
+*.h5
+*.pkl
+*.npy
+*.npz
+
+# Generated Media, Videos, and Metric Logs
+outputs/*
+!outputs/.gitkeep
+*.mp4
+*.avi
+*.gif
+*.png
+*.jpg
+*.jpeg
+*.log
+runs/
+wandb/
+
+# MuJoCo / Windows Local Artifacts
+*.dll
+macros_private.py
+
+# Editors & OS Files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
