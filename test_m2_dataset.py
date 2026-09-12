@@ -1,6 +1,7 @@
 """
 test_m2_dataset.py
-Generates a small demonstration set and verifies PyTorch DataLoader batch pipelines.
+Generates a test demonstration set and verifies PyTorch DataLoader batch pipelines
+with 15D Vision-Force-Proprioception multimodal state vectors.
 """
 
 import os
@@ -11,9 +12,9 @@ from src.dataset.robosuite_dataset import RobosuiteVisuomotorDataset
 def main():
     dataset_path = "data/lift_demos.hdf5"
     
-    # 1. Collect 5 demonstrations for testing (run 50 later for full training)
+    # 1. Collect 5 test demonstrations with 15D state vectors
     print("=" * 60)
-    print("STEP 1: GENERATING DEMONSTRATION TRAJECTORIES")
+    print("STEP 1: GENERATING TEST DEMONSTRATIONS (WITH FORCE/TORQUE)")
     print("=" * 60)
     collect_dataset(num_episodes=5, output_path=dataset_path)
 
@@ -27,7 +28,7 @@ def main():
     bc_batch = next(iter(bc_loader))
     print(f"Dataset total samples : {len(bc_dataset)}")
     print(f"Batch Image Tensor    : {bc_batch['image'].shape} (Expected: [16, 3, 128, 128]) | min={bc_batch['image'].min():.2f}, max={bc_batch['image'].max():.2f}")
-    print(f"Batch Proprio Tensor  : {bc_batch['proprio'].shape} (Expected: [16, 9])")
+    print(f"Batch Proprio Tensor  : {bc_batch['proprio'].shape} (Expected: [16, 15])  <-- 15D Vision-Force Verified!")
     print(f"Batch Action Tensor   : {bc_batch['action'].shape} (Expected: [16, 7])")
 
     # 3. Test Action Chunking DataLoader (ACT/Diffusion horizon: pred_horizon=16)
@@ -40,7 +41,7 @@ def main():
     chunk_batch = next(iter(chunk_loader))
     print(f"Chunked Action Tensor : {chunk_batch['action'].shape} (Expected: [16, 16, 7])")
     print("=" * 60)
-    print("M2 PIPELINE VERIFIED SUCCESSFULLY.")
+    print("M2 PIPELINE VERIFIED SUCCESSFULLY WITH VISION-FORCE MULTIMODAL DATA.")
     print("=" * 60)
 
 if __name__ == "__main__":

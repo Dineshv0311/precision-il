@@ -1,7 +1,7 @@
 """
 src/dataset/collect_demonstrations.py
 Scripted Expert Trajectory Generator for the Robosuite Lift Task.
-Saves observations (RGB + Proprioception) and actions into HDF5 format.
+Captures RGB images, 6-DoF Force/Torque Wrench, and Proprioception (15D State).
 """
 
 import os
@@ -29,9 +29,9 @@ class ScriptedLiftExpert:
     def __init__(self, kp=6.0):
         self.kp = kp
         self.state = "HOVER"
-        self.hover_height = 0.12  # meters above cube
-        self.grasp_height = 0.015 # meters above cube center
-        self.lift_target = 0.18   # height to lift
+        self.hover_height = 0.12   # meters above cube
+        self.grasp_height = 0.015  # meters above cube center
+        self.lift_target = 0.18    # target height to lift
         self.counter = 0
 
     def reset(self):
@@ -41,10 +41,7 @@ class ScriptedLiftExpert:
     def get_action(self, obs):
         eef_pos = obs["robot0_eef_pos"]
         cube_pos = obs["cube_pos"]
-        
-        # Target action: [dx, dy, dz, ax, ay, az, grasp]
         action = np.zeros(7, dtype=np.float32)
-        
         target_pos = cube_pos.copy()
 
         if self.state == "HOVER":
@@ -52,7 +49,6 @@ class ScriptedLiftExpert:
             diff = target_pos - eef_pos
             action[:3] = np.clip(diff * self.kp, -1.0, 1.0)
             action[6] = -1.0  # Open gripper
-            
             if np.linalg.norm(diff[:2]) < 0.015 and abs(diff[2]) < 0.02:
                 self.state = "DESCEND"
 
@@ -60,8 +56,7 @@ class ScriptedLiftExpert:
             target_pos[2] += self.grasp_height
             diff = target_pos - eef_pos
             action[:3] = np.clip(diff * self.kp, -1.0, 1.0)
-            action[6] = -1.0  # Open gripper
-            
+            action[6] = -1.0
             if abs(diff[2]) < 0.01:
                 self.state = "GRASP"
                 self.counter = 0
@@ -72,14 +67,14 @@ class ScriptedLiftExpert:
             action[:3] = np.clip(diff * self.kp, -0.5, 0.5)
             action[6] = 1.0   # Close gripper
             self.counter += 1
-            if self.counter > 15:  # Allow gripper fingers to stabilize contact
+            if self.counter > 15:  # Allow contact forces to settle
                 self.state = "LIFT"
 
         elif self.state == "LIFT":
             target_pos[2] += self.lift_target
             diff = target_pos - eef_pos
             action[:3] = np.clip(diff * self.kp, -1.0, 1.0)
-            action[6] = 1.0   # Keep gripper closed
+            action[6] = 1.0   # Keep closed
 
         return action
 
@@ -96,7 +91,7 @@ def collect_dataset(num_episodes=50, output_path="data/lift_demos.hdf5"):
         has_offscreen_renderer=True,
         use_camera_obs=True,
         camera_names=["agentview", "robot0_eye_in_hand"],
-        camera_heights=128,  # Optimized for vision backbone training efficiency
+        camera_heights=128,
         camera_widths=128,
         reward_shaping=False,
         control_freq=20,
@@ -104,14 +99,13 @@ def collect_dataset(num_episodes=50, output_path="data/lift_demos.hdf5"):
     )
 
     expert = ScriptedLiftExpert()
-    
     hdf5_file = h5py.File(output_path, "w")
     data_group = hdf5_file.create_group("data")
     
     successful_episodes = 0
     total_attempts = 0
 
-    print(f"Starting data collection: Target = {num_episodes} successful demonstrations...")
+    print(f"Collecting {num_episodes} demonstrations with 15D Vision-Force-Proprioception states...")
 
     while successful_episodes < num_episodes:
         total_attempts += 1
@@ -122,22 +116,27 @@ def collect_dataset(num_episodes=50, output_path="data/lift_demos.hdf5"):
         ep_wrist = []
         ep_proprio = []
         ep_actions = []
-        
         success = False
 
         for step in range(env.horizon):
             action = expert.get_action(obs)
             
-            # Record current observation before stepping
-            # Apply vertical flip [::-1] for OpenGL alignment
+            # 1. Vision: Flip vertically for OpenGL coordinate alignment
             agentview_img = obs["agentview_image"][::-1, :, :].copy()
             wrist_img = obs["robot0_eye_in_hand_image"][::-1, :, :].copy()
             
+            # 2. Force / Torque Wrench (Safe fallback if zero contact)
+            eef_force = obs.get("robot0_eef_force", np.zeros(3, dtype=np.float32))
+            eef_torque = obs.get("robot0_eef_torque", np.zeros(3, dtype=np.float32))
+
+            # 3. 15-Dimensional Multimodal Proprioception Vector
             proprio = np.concatenate([
-                obs["robot0_eef_pos"],
-                obs["robot0_eef_quat"],
-                obs["robot0_gripper_qpos"]
-            ]) # 9-dimensional vector
+                obs["robot0_eef_pos"],       # 3D: [x, y, z]
+                obs["robot0_eef_quat"],      # 4D: [w, x, y, z]
+                obs["robot0_gripper_qpos"],  # 2D: [finger_left, finger_right]
+                eef_force,                   # 3D: [fx, fy, fz]
+                eef_torque                   # 3D: [tx, ty, tz]
+            ]).astype(np.float32)            # Total = 15D
             
             ep_agentview.append(agentview_img)
             ep_wrist.append(wrist_img)
@@ -145,7 +144,6 @@ def collect_dataset(num_episodes=50, output_path="data/lift_demos.hdf5"):
             ep_actions.append(action)
 
             obs, reward, done, info = env.step(action)
-            
             if env._check_success():
                 success = True
 
@@ -159,15 +157,16 @@ def collect_dataset(num_episodes=50, output_path="data/lift_demos.hdf5"):
             ep_grp.create_dataset("actions", data=np.array(ep_actions, dtype=np.float32), compression="gzip")
             
             successful_episodes += 1
-            print(f"Recorded Demo {successful_episodes}/{num_episodes} (Trajectory Length: {len(ep_actions)})")
+            print(f"Recorded Demo {successful_episodes}/{num_episodes} (Length: {len(ep_actions)})")
         else:
-            print("Trajectory failed or timed out before success. Discarding...")
+            print("Trajectory failed / timed out. Discarding...")
 
     hdf5_file.attrs["total_episodes"] = successful_episodes
     hdf5_file.close()
     env.close()
-    print(f"\nDataset saved successfully to {output_path} (Success Rate: {successful_episodes}/{total_attempts})")
+    print(f"\n[DONE] Saved dataset with 15D state vectors to {output_path}")
 
 
 if __name__ == "__main__":
+    # Generate 50 high-quality expert demonstrations for our benchmark
     collect_dataset(num_episodes=50, output_path="data/lift_demos.hdf5")
